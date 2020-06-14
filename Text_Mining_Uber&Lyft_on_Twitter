@@ -1,8 +1,6 @@
 #Create Shinny App to compare Customer feedback on Uber & Lyft on Twitter 
 
 library(shiny)
-setwd("~/Desktop/MSBA_Last_Sem/BZAN557/HW")
-
 # Installing package if not already installed 
 EnsurePackage<-function(x)
 {x <- as.character(x)
@@ -33,10 +31,11 @@ PrepareTwitter<-function()
 PrepareTwitter()
 
 shinyServer(function(input, output, session) {
-  consumer_api_key <- "1lbSV4SkobjpJfxgQpu9jh62P" # Enter your consumer key
-  consumer_api_secret <- "WgNB8GEsBb3NvMwtUy5FteUqIzWD40MmaDZtoHBy8tkTP6vhBk" # Enter your consumer secret
-  access_token <- "1178678041653870592-WdCki9DatG7iJmZZVAbhoNmpVmgJAx" # Enter your access token
-  access_token_secret <- "3kF6XuLULRL9INGgc5qNdfQMXWTeCiObI8GEU0Km4aW4S" # Enter your access secret
+  source("my_twitter_credentials.R")
+  setup_twitter_oauth(consumer_key,
+                    consumer_secret,
+                    access_token,
+                    access_secret)
   setup_twitter_oauth(consumer_api_key, consumer_api_secret, access_token, access_token_secret) # Sets up the OAuth credentials for a twitteR session
   
   #Search tweets and create a data frame -Stanton (2013)
