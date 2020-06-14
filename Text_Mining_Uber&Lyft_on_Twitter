@@ -1,4 +1,4 @@
-#Create Uber & Lyft on Twitter 
+#Create Shinny App to compare Customer feedback on Uber & Lyft on Twitter 
 
 library(shiny)
 setwd("~/Desktop/MSBA_Last_Sem/BZAN557/HW")
