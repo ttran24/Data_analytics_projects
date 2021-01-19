@@ -1,0 +1,267 @@
+---
+title:  "Random Forest and KNN Algorithm"
+author: "Thao Tran" 
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+setwd("/Users/ThaoTran/Desktop")
+library(tidyverse)
+library(dplyr)
+library(AUC)
+library(class)
+library(caret)
+library(ggplot2)
+
+#load the package randomForest 
+if (!require("randomForest")) {
+  install.packages('randomForest',
+                   repos="https://cran.rstudio.com/", 
+                   quiet=TRUE) 
+  require('randomForest')
+}
+```
+
+## Cleaning Data
+
+```{r cleaning}
+#Read the data files
+training<-read.csv("exercise_01_train.csv")
+testing <- read.csv("exercise_01_test.csv")
+#Look at the data
+#str(training, vec.len=0.5)
+#summary(training)
+#Count number of missing data
+sum(is.na(training))
+#Distribution of dependent variable y
+table(training$y)
+
+#Convert factor variables to characters to clean, and then convert it back to factor at the end
+for (i in 1:ncol (training)) if (class (training[,i]) == "factor") training[,i] <- as.character(training[,i])
+
+#Look at the categorical variables to see if they have bad values
+table(training$x35)
+table(training$x34)
+table(training$x68)
+table(training$x93)
+
+#Replace duplicated values with the same name for column x35
+training$x35[training$x35 == "thurday"] <- "thur"
+training$x35[training$x35 == "wednesday"] <- "wed"
+training$x35[training$x35 == "friday"] <- "fri"
+
+#Replace the characters NAs/blank to a new category, called “unknown”
+training$x35[training$x35==""]<-"Unknown"
+training$x34[training$x34==""]<-"Unknown"
+training$x68[training$x68==""]<-"Unknown"
+training$x93[training$x93==""]<-"Unknown"
+table(training$x35)
+
+#Check and Remove duplicated rows in the training dataset
+training <- unique(training)
+
+#Convert the percentage categorical variables into numeric
+training$x41 <- parse_number(training$x41)
+training$x45 <- parse_number(training$x45)
+
+#Replace missing values with column mean
+training[] <- lapply(training, function(x) ifelse(is.na(x), mean(x, na.rm = TRUE), x))
+
+#Check for missing values
+sum(is.na(training))
+sum(training=="")
+
+#Convert all categorical variables back to factor:
+training <- mutate_if(training, is.character, as.factor)
+
+```
+
+## Split the training data file to train and test data subsets
+```{r }
+#Randomize order of indicators
+allind <- sample(x=1:nrow(training),size=nrow(training))
+head(allind)
+#Split 80% Train and 20% Test
+trainind <- allind[1:round(length(allind)*.8)]
+testind <- allind[round(length(allind)*.8+1):length(allind)]
+
+#Create train dataset
+x.train <- training[trainind,]
+x.train$y <- NULL
+y.train <- as.factor(training[trainind, "y"])
+
+#Create test dataset
+x.test <- training[testind,]
+x.test$y <- NULL
+y.test <- as.factor(training[testind, "y"])
+```
+
+# Build model 1: Using Random Forest
+Data is ready for Random forest
+```{r build model}
+#Build the first random forest model with 100 trees
+#Start processing time
+start.prep <- Sys.time()
+#Create a first random forest model
+rFmodel <- randomForest(x=x.train,
+                        y=y.train,  
+                        ntree=100, 
+                        importance=TRUE)
+Sys.time()-start.prep #End
+
+plot(rFmodel)
+#Red dashed line: class error of 0
+#Green dotted line: class error of 1
+#Black solid line: Out of bag (OOB) error
+#We can see that class 0 has lower error than class 1. 
+#This is because there are much more zeroes to learn from.
+
+#Look at importance of each variable
+importance(rFmodel,type =1)
+
+#Plot
+varImpPlot(rFmodel,type=1)
+
+#Predict on test dataset
+predrF <- predict(rFmodel,x.test,type="prob")[,2]
+
+predrF.response <- predict(rFmodel,x.test,type="response")
+
+#Model Evaluation
+AUC.RF <- auc(roc(predrF,y.test))
+confusionMatrix(table(predrF.response, y.test))
+ACC.RF <- 100 * sum(y.test == predrF.response)/NROW(y.test)
+paste0("The accuracy for the Random Forest model with 100 trees is ", ACC.RF, "% and AUC = ", AUC.RF)
+
+plot(roc(predrF,y.test))
+```
+
+## Final model 1 - Use full training dataset for final Random Forest model and test on the testing file
+
+Prepare Testing file is similar to cleaning the training file 
+```{r}
+#Convert factor to character
+for (i in 1:ncol (testing)) if (class (testing[,i]) == "factor") testing[,i] <- as.character(testing[,i])
+
+#Replace duplicated values with the same name for column x35
+testing$x35[testing$x35 == "thurday"] <- "thur"
+testing$x35[testing$x35 == "wednesday"] <- "wed"
+testing$x35[testing$x35 == "friday"] <- "fri"
+
+#Convert the characters NAs to a new category, called “unknown” 
+testing$x35[testing$x35==""]<-"Unknown"
+testing$x34[testing$x34==""]<-"Unknown"
+testing$x68[testing$x68==""]<-"Unknown"
+testing$x93[testing$x93==""]<-"Unknown"
+table(testing$x35)
+
+#Check and Remove duplicated rows
+testing <- unique(testing)
+
+#Convert the percentage categorical variables into numeric
+testing$x41 <- parse_number(testing$x41)
+testing$x45 <- parse_number(testing$x45)
+
+#Replace missing values with column mean
+testing[] <- lapply(testing, function(x) ifelse(is.na(x), mean(x, na.rm = TRUE), x))
+sum(is.na(testing))
+sum(testing=="")
+
+#Convert all character columns to factor:
+testing <- mutate_if(testing, is.character, as.factor)
+```
+
+## Build the Random Forest model on the full training data with 500 trees
+```{r}
+x.training <- training[,-101]
+y.training <- as.factor(training$y)
+
+#Processing time
+start.prep <- Sys.time()
+rFmodel.1<- randomForest(x=x.training,
+                         y=y.training,
+                         ntree=500,
+                         importance=TRUE)
+
+Sys.time()-start.prep #End
+
+```
+
+Predict on the testing file and prepare the submision file
+```{r}
+#Predict on testing file
+pred.test<- predict(rFmodel,testing,type="prob")[,2]
+
+#Prepare submission file
+datatosubmit <- data.frame(predictions = pred.test)
+
+write.table(x=datatosubmit, file=paste0("results1",".csv"),row.names = FALSE, sep=',')
+```
+
+# Build model 2: Using KNN Algorithm
+Build model on training dataset 
+```{r}
+#Convert all factors columns to numeric since knn requires that all predictors be numeric
+fulltraining.knn <-  mutate_if(training, is.factor, as.numeric)
+
+#Standardize the data set so that the output remains unbiased.
+stdev <- sapply(fulltraining.knn[,-101],sd)
+means <- sapply(fulltraining.knn[,-101],mean)
+fulltraining.knn.standardized<- data.frame(t((t(fulltraining.knn[,-101])-means)/stdev))
+x.fulltraining.knn.standardized <- cbind(fulltraining.knn.standardized,fulltraining.knn$y)
+
+#Create train dataset for knn
+x.train.knn <- x.fulltraining.knn.standardized[trainind,]
+x.train.knn$`fulltraining.knn$y` <- NULL
+y.train.knn <- as.factor(x.fulltraining.knn.standardized[trainind,"fulltraining.knn$y"])
+
+#Create test dataset for knn
+x.test.knn <- x.fulltraining.knn.standardized[testind,]
+x.test.knn$`fulltraining.knn$y` <- NULL
+y.test.knn <- as.factor(x.fulltraining.knn.standardized[testind,"fulltraining.knn$y"])
+
+#Build the first KNN model
+#Number of k = sqrt(num. of observations) ~ 177
+knn.177 <- knn(train=x.train.knn, test=x.test.knn, cl=y.train.knn, k=177, prob = TRUE)
+
+#This model only returns the predicted probability of the most common class which is 0, so take 1 subtract the return probabilities to calculate the predicted probability of '1'
+pred.knn <- 1-attributes(knn.177)$prob
+
+#Model Evaluation
+AUC.177 <- auc(roc(pred.knn,y.test.knn))
+ACC.177 <- 100 * sum(y.test.knn == knn.177)/NROW(y.test.knn)
+paste0("The accuracy for K = 177 is ", ACC.177, "% and AUC = ", AUC.177)
+confusionMatrix(table(knn.177, y.test.knn))
+#The accuracy for K = 177 is 83.75% and AUC = 98.7
+```
+
+## Build the KNN model with the full dataset 
+```{r}
+#Convert all factors columns to numeric
+fulltesting.knn <-  mutate_if(testing, is.factor, as.numeric)
+
+#Standardize the testing data
+fulltesting.knn.standardized<- data.frame(t((t(fulltesting.knn)-means)/stdev))
+
+#Factor of true classifications of training set
+fulltraining.knn.y <- as.factor(fulltraining.knn$y)
+
+#Build the final KNN model
+#Start processing time
+start.prep <- Sys.time()
+knn.177 <- knn(train=fulltraining.knn.standardized , test=fulltesting.knn.standardized, cl=fulltraining.knn.y, k=177, prob = TRUE)
+Sys.time()-start.prep #End
+
+```
+
+Predict and prepare the submission file
+```{r}
+#The predicted probability on the testing file
+fullpred.knn <- 1-attributes(knn.177)$prob
+
+#Prepare submission file for KNN model
+datatosubmit2 <- data.frame(predictions=fullpred.knn)
+
+write.table(x=datatosubmit2, file=paste0("results2",".csv"),row.names = FALSE, sep=',')
+```
