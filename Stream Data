@@ -1,0 +1,123 @@
+# Read in monthly observational data (firehose) and prepare file for predictions
+# Randdom Forest will be used to create final model for predictions
+
+# Version 5:
+# # Use KNN to find nearest 1 neighbor for test data
+# # test file 3-31-2019 through month 20
+# # test file 4-6-2019 through month 22
+# # test file 4-23-2019 through month 27
+
+# Assumptions: 
+# use customer record that looks most like score data for prediction
+# once a monthly firehose file has been processed it is not needed again
+# combine newest firehose and previous test file
+# nearest neighbor record written to new test file
+
+#######################################################################
+#
+#Setup: libraries & working directory
+
+library(jsonlite)
+library('FNN')
+
+setwd("C:/Users/Dave/Documents/R/BZAN542/stream")
+#setwd("C:/Users/Tammy/Documents/MSBA/BZAN542/stream")
+#setwd("https://www.dropbox.com/home/BZAN557stream")
+#setwd("~/Dropbox/BZAN557stream/")
+
+#######################################################################
+#
+# Read unprocessed data and prep for analysis
+#
+
+#Processing time
+start.prep <- Sys.time()
+
+#Read in firehose files
+csv.data <- list()
+csv.folder <- paste0(getwd(),"/data")
+csv.list <- list.files(path=csv.folder, pattern=".csv", full.names=TRUE)
+#Loop through firehose csv files
+for (month in 1:length(csv.list)) {
+  csv.data[[month]] <- read.csv(csv.list[month],header=TRUE,stringsAsFactors = FALSE)
+}
+
+csv.data[[month+1]] <- read.csv(paste0(getwd(),"/test_2019-04-06.csv"),header=TRUE,stringsAsFactors = FALSE)
+
+firehose = do.call("rbind",csv.data)
+firehose$customer_id <- as.character(firehose$customer_id)
+firehose[is.na(firehose)] <- 0
+
+rm(csv.data)
+
+#Prep firehose dataset
+
+#subset to just xvars
+x.data <- subset(firehose, select = c(x1:x36))
+#explore test dataset
+nrow(x.data)
+ncol(x.data)
+length(x.data)
+
+#standardize
+stdev <- sapply(x.data,sd)
+means <- sapply(x.data,mean)
+x.data <- data.frame(t((t(x.data)-means)/stdev))
+
+#Read in score data
+url.score <- 'http://mbserver.bus.utk.edu:3000/score'
+score <- fromJSON(url.score)
+score$year_month_id <- as.integer(score$year_month_id)
+score[is.na(score)] <- 0
+
+#keep x vars from score data for predictions
+x.score <- subset(score, select = c(x1:x36))
+#standardize
+x.score <- data.frame(t((t(x.score)-means)/stdev))
+
+(Sys.time()-start.prep)
+
+
+#######################################################################
+#
+# Apply KNN to find 1 nearest neighbor for each customer id in score
+#
+#
+
+#create test data frame to capture nearest neighbor records
+x.test <- data.frame(matrix(nrow=nrow(score),ncol = ncol(firehose)))
+colnames(x.test) <- names(firehose)
+stat_interval <- floor(nrow(score)/100)
+
+#look for nearest neighbor for each customer id in score data
+start.knn <- Sys.time()
+
+for (i in 1:nrow(score)) {
+
+#subset firehose and score xvars by customer id in score data  
+x.cid <- x.data[which(firehose$customer_id==score$customer_id[i]),]
+xs.cid <- x.score[which(score$customer_id==score$customer_id[i]),]
+
+#get 1 nearest neighbor in firehose data
+#this is the monthly record that looks most like the score data
+indicatorsKNN <- as.integer(knnx.index(data=x.cid, 
+                                       query=xs.cid, 
+                                       k=1))
+
+#save into test data frame
+#use for k=1
+x.test[i,] <- firehose[which(firehose$customer_id==score$customer_id[i]),][indicatorsKNN,]
+
+#remove customer datasets to reduce memory usage
+rm(x.cid)
+rm(xs.cid)
+
+#dislay progress through score records
+if((i %% stat_interval) == 0)
+  cat(i/stat_interval,"%","at", Sys.time()-start.knn,"\n")
+}
+
+(Sys.time()-start.knn)
+
+#write new test file
+write.csv(x=x.test, file=paste0(getwd(),"/test_",Sys.Date(),".csv"),row.names = FALSE)
