@@ -1,0 +1,282 @@
+---
+title: "Document Classification"
+output: html_document
+---
+
+> This part of code includes the following:
+> building Corpus, and then union the Corpora
+> WordCloud
+> Bar plot 
+> Chisq.test for top freq terms
+> Bayes Models: Accuracy vs. the number of terms used in the model
+
+
+```{r}
+library("tm")
+library("SnowballC")
+library(wordcloud2)
+library("RColorBrewer")
+library(e1071)
+library(ggplot2)
+```
+
+
+```{r}
+ANA_data <- readRDS("ANA_data.RDS")
+hiphop_corpus <- Corpus(VectorSource(ANA_data$text[which(ANA_data$genre=="hip_hop")])) 
+soul_corpus <- Corpus(VectorSource(ANA_data$text[which(ANA_data$genre=="soul")])) 
+```
+
+
+```{r}
+stop.words=c(stopwords("English"), "\n","dont","get", "got", "just","now","can", "aint", "one","cant","chorus", "will", "ive", "let", "youre", "ill", "want", "wanna", "gonna", "verse")
+
+dtm.hiphop <- DocumentTermMatrix(hiphop_corpus, control=list(removePunctuation = TRUE,
+                                                     removeNumbers = TRUE,
+                                                     tolower = TRUE,
+                                                     stemming = FALSE,
+                                                     stopwords = stop.words,
+                                                     minDocFreq=1,
+                                                     minWordLength = 1))
+
+dtm.soul <- DocumentTermMatrix(soul_corpus, control=list(removePunctuation = TRUE,
+                                                     removeNumbers = TRUE,
+                                                     tolower = TRUE,
+                                                     stemming = FALSE,
+                                                     stopwords = stop.words,
+                                                     minDocFreq=1,
+                                                     minWordLength = 1))
+
+(dtm <- c(dtm.hiphop,dtm.soul))  # final document-term matrix
+
+inspect(dtm[1:5,1:5])
+```
+
+## hip hop word freq
+```{r}
+m <- as.matrix(dtm.hiphop)
+v <- sort(colSums(m),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v)
+head(d, 20)
+
+d$word <- gsub(".*fuck.*", "Fwords", d$word)
+d$word <- gsub(".*nigga.*", "Nwords", d$word)
+d$word <- gsub(".*shit.*", "Swords", d$word)
+d$word <- gsub(".*bitch.*", "Bwords", d$word)
+
+set.seed(557)
+wordcloud2(d[1:100,], maxRotation = 0.3,shape='apple')
+
+ggplot(data=d[1:20,], aes(x=word, y=freq)) +  
+        geom_bar(stat="identity", width=0.7,fill="orange")+
+        coord_flip()+
+        theme_minimal()+
+          theme(axis.text = element_text(face="bold",size=11),
+          plot.title = element_text(color="black",size=14, face="bold",
+          hjust =0.5),axis.title = element_text( size=14,face="bold"))+
+        scale_x_discrete(limits=d[20:1,"word"])+
+        ggtitle("Top 20 words in the Hip Hop")
+```
+
+
+## soul - word freq
+```{r}
+m <- as.matrix(dtm.soul)
+v <- sort(colSums(m),decreasing=TRUE)
+d <- data.frame(word = names(v),freq=v)
+head(d, 20)
+d$word <- gsub(".*fuck.*", "Fwords", d$word)
+d$word <- gsub(".*nigga.*", "Nwords", d$word)
+d$word <- gsub(".*shit.*", "Swords", d$word)
+d$word <- gsub(".*bitch.*", "Bwords", d$word)
+
+set.seed(1234)
+wordcloud2(d[1:100,], maxRotation = 0.3,shape='apple')
+
+ggplot(data=d[1:20,], aes(x=word, y=freq)) +  
+        geom_bar(stat="identity", width=0.7,fill="cadetblue4")+
+        coord_flip()+
+        theme_minimal()+
+          theme(axis.text = element_text(face="bold",size=11),
+          plot.title = element_text(color="black",size=14, face="bold",
+          hjust =0.5),axis.title = element_text( size=14,face="bold"))+
+        scale_x_discrete(limits=d[20:1,"word"])+
+        ggtitle("Top 20 words in the Soul")
+```
+
+
+# Feature Selection
+First, let's look at the word frequency
+
+```{r}
+## findFreqTerms(dtm,900) 
+term.freq <- apply(dtm, 2, sum)
+term.freq <- sort(term.freq, decreasing=TRUE)
+head(term.freq, n=20)
+tail(term.freq, n=20)
+```
+
+# Naive Bayes Classifier
+
+## Continuous Feature
+```{r}
+term.number <- c(seq(from=0,to=100,by=10),seq(from=150,to=950,by=50))
+set.seed(1234)
+class.labels <- ANA_data$genre
+accuracy <- c()
+for (i in 1:length(term.number)){
+        terms_kept <- names(term.freq)[1:term.number[i]]
+        length(terms_kept)
+        dtm_reduced <- dtm[,terms_kept]
+        dim(dtm_reduced)
+        df <- as.data.frame(as.matrix(dtm_reduced))
+        
+        df <- cbind(class.labels,df)
+        
+        train.ind <- rbinom(nrow(df), size=1, prob=0.9)
+        training.data <- df[train.ind==1,]
+        testing.data  <- df[train.ind==0,]
+        mybayes <- naiveBayes(class.labels ~ ., data=training.data) 
+        
+        testing <- predict(mybayes, testing.data, type = "class")
+        tab <- table(testing, testing.data$class.labels, dnn=list('predicted','actual')) 
+        
+        accuracy[i] <- round((tab[2,2]+tab[1,1])/sum(tab),3)
+        
+}
+
+df.accuracy <- data.frame(cbind(term.number,accuracy))
+# saveRDS(df.accuracy,"df_accuracy_continuous.RDS")
+```
+
+
+```{r}
+# df.accuracy <- readRDS("df_accuracy_continuous.RDS")
+# df.accuracy <- readRDS("df_accuracy_binary.RDS")
+
+color.name <- "firebrick4"
+# color.name <- "forestgreen"
+
+ggplot(df.accuracy,aes(x=term.number, y=accuracy)) +
+        geom_point(size=2.8, shape=20,color=color.name)+
+        theme_minimal()+
+        xlab("Number of Top Frequent Words")+ 
+        ylab("Accuracy Rate")+
+        theme(axis.text = element_text(face="bold",size=10),
+              plot.title = element_text(color=color.name,
+                                        size=14, face="bold",
+                                        hjust =0.5),
+              axis.title = element_text( size=10,face="bold"))+
+        ggtitle("Accuracy - Continuous Features")+
+        scale_y_continuous(limits=c(0.5,1))+
+        geom_line(color=color.name)
+```
+
+
+## Binary Features
+```{r}
+term.number <- c(seq(from=0,to=100,by=10),
+                 seq(from=150,to=950,by=50),
+                 seq(from=1000,to=5000,by=200))
+set.seed(1234)
+class.labels <- ANA_data$genre
+accuracy <- c()
+for (i in 1:length(term.number)){
+        terms_kept <- names(term.freq)[1:term.number[i]]
+        length(terms_kept)
+        dtm_reduced <- dtm[,terms_kept]
+        dim(dtm_reduced)
+        
+        dtm.bin <- weightBin(dtm_reduced)
+        df2 <- as.data.frame(as.matrix(dtm.bin))
+        df2 <- cbind(class.labels,df2)
+        
+        class(df2[,1]) 
+        class(df2[,2]) 
+        for(j in 2:NCOL(df2)){
+                df2[,j] <- df2[,j]>0 # here we use boolean
+        }
+        class(df2[,2]) 
+        
+        training.data2 <- df2[train.ind==1,]
+        testing.data2  <- df2[train.ind==0,]
+        
+        mybayes2 <- naiveBayes(class.labels ~ ., data=training.data2) 
+        
+        # compare the predicted and the actual
+        testing2 <- predict(mybayes2, testing.data2, type = "class")
+        tab <- table(testing2, testing.data2$class.labels, dnn=list('predicted','actual'))
+        accuracy[i] <- round((tab[2,2]+tab[1,1])/sum(tab),3)
+        
+}
+
+df.accuracy <- data.frame(cbind(term.number,accuracy))
+
+##   saveRDS(df.accuracy,"df_accuracy_binary.RDS")
+```
+
+
+
+```{r}
+# class distribution (prior)
+mybayes2$apriori
+mybayes2$tables$like
+```
+
+
+
+```{r}
+dtm.tfxidf <- weightTfIdf(dtm) # transforma a term-frequency matrix into a TF-IFD matrix
+inspect(dtm.tfxidf[1:5, 1:5])
+
+# importance of terms by sum TF-IDF
+total <- apply(dtm.tfxidf,2,sum)
+sort(total, decreasing = TRUE)[1:20]
+
+# importance of terms by max TF-IDF
+max_tfidf <- apply(dtm.tfxidf,2,max)
+sort(max_tfidf, decreasing = TRUE)[1:20]
+
+inspect(dtm.tfxidf[1:5, "just"])
+sum(dtm.tfxidf[, "just"])
+```
+
+```{r}
+## top 20 terms from each group
+term_union <- c("like","know","love","cause",
+                   "yeah","baby","girl","Nwords",
+                   "back","see","make","say","Swords",
+                   "come","thats" , "man","right",  
+                   "never" ,"Fwords", "time", "love",  
+                "know",  "baby",  "like",  
+                 "yeah",  "never", "time",  "come",  
+                 "say",   "make", "see",   "heart", 
+                 "way",   "cause", "right", "feel",  
+                 "back",  "take",  "away" , "night") 
+term_union <- unique(term_union)
+term_union <- term_union[which(term_union!="Nwords")]
+term_union <- term_union[which(term_union!="Fwords")]
+term_union <- term_union[which(term_union!="Swords")]
+
+dtm_reduced <- dtm[,term_union]
+dim(dtm_reduced)
+
+result <- NULL
+for(j in 1:length(term_union)){
+        term_used <- as.vector(dtm[,term_union[j]]>0)
+        N11 <- sum(term_used & ANA_data$genre=="hip_hop")   
+        N10 <- sum(term_used & ANA_data$genre=="soul")  
+        N01 <- sum(!term_used & ANA_data$genre=="hip_hop")  
+        N00 <- sum(!term_used & ANA_data$genre=="soul") 
+        
+        # run chi-square to filter terms
+        m <- matrix(c(N11,N10,N01,N00), nrow=2, byrow = TRUE)
+        p <- chisq.test(m, simulate.p.value = TRUE)$p.value
+        this_term <- list(index=j, term=term_union[j],
+                          N11=N11, N10=N10, N01=N01, N00=N00, p.value=p)
+        result <- rbind(result, as.data.frame(this_term))
+        
+}
+result
+# write.table(result,"result.txt",sep="\t",row.names = FALSE)
+```
